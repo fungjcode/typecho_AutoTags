@@ -4,7 +4,7 @@
  * AutoTags 通过DeepSeek API自动生成文章标签插件
  * @package AutoTags
  * @author 风之翼灵‘BLog
- * @version 1.4.2
+ * @version 1.4.3
  * @link http://www.fungj.com
  */
 class AutoTags_Plugin implements Typecho_Plugin_Interface
@@ -116,13 +116,13 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
      */
     private static function callDeepSeekApi($apiKey, $prompt)
     {
-        $url = 'https://api.deepseek.com/v1/chat/completions';
+        $url = 'https://api.deepseek.com/chat/completions';
         $headers = array(
             'Authorization: Bearer ' . $apiKey,
             'Content-Type: application/json',
         );
         $data = array(
-            'model' => 'deepseek-chat',
+            'model' => 'deepseek-v4-flash',
             'messages' => array(
                 array(
                     'role' => 'user',
