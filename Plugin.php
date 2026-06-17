@@ -3,8 +3,8 @@
 /**
  * AutoTags 通过DeepSeek API自动生成文章标签插件
  * @package AutoTags
- * @author 风之翼灵‘BLog
- * @version 1.4.3
+ * @author 风之翼灵'BLog
+ * @version 1.4.6
  * @link http://www.fungj.com
  */
 class AutoTags_Plugin implements Typecho_Plugin_Interface
@@ -46,7 +46,7 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
     {
         $deepseekApiKey = new Typecho_Widget_Helper_Form_Element_Text('deepseekApiKey', NULL, '', _t('DeepSeek API Key'));
         $form->addInput($deepseekApiKey);
-        
+
         $contentLength = new Typecho_Widget_Helper_Form_Element_Text('contentLength', NULL, '333', _t('文章正文提取内容长度（字符数），内容长度越大，消耗token数量会越多，请自行选择，默认333字符'));
         $form->addInput($contentLength);
     }
@@ -75,34 +75,52 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
         $deepseekApiKey = $options->plugin('AutoTags')->deepseekApiKey;
 
         if (empty($deepseekApiKey)) {
+            return;
+        }
 
+        $cid = !empty($contents['cid']) ? $contents['cid'] : $widget->cid;
+        if (empty($cid)) {
+            return;
+        }
+
+        $existingTags = Typecho_Db::get()->fetchObject(
+            Typecho_Db::get()->select('COUNT(*) AS count')
+                ->from('table.relationships')
+                ->join('table.metas', 'table.relationships.mid = table.metas.mid')
+                ->where('table.relationships.cid = ?', $cid)
+                ->where('table.metas.type = ?', 'tag')
+        );
+        $tagCount = !empty($existingTags) ? intval($existingTags->count) : 0;
+
+        if ($tagCount > 0) {
             return;
         }
 
         $title = $contents['title'];
-        $options = Typecho_Widget::widget('Widget_Options');
         $contentLength = $options->plugin('AutoTags')->contentLength;
         $text = mb_substr(strip_tags($contents['text']), 0, $contentLength ?: 333, 'utf-8');
 
-        $prompt = "请根据以下文章标题和正文内容，提取关键词作为文章标签。要求：1.标签必须是2-4个字的有效词语；2.标签含义不能重复；3.标签必须是能概括文章标题及正文的关键词；4.随机获取1至10个标签，用逗号分隔。不要输出任何解释，只输出标签。\\n\\n标题：{$title}\\n\\n正文：{$text}";
-
+        $prompt = "请根据以下文章标题和正文内容，提取关键词作为文章标签。要求：1.标签必须是2-6个字的有效词语；2.标签含义不能重复；3.标签必须是能概括文章标题及正文的关键词；4.随机获取5至10个标签，用逗号','分隔。不要输出任何解释，只输出标签。\n\n标题：{$title}\n\n正文：{$text}";
 
         $deepseekResponse = self::callDeepSeekApi($deepseekApiKey, $prompt);
-        if (!empty($deepseekResponse)) {
-            $tags = explode(',', $deepseekResponse);
-            $tags = array_map('trim', $tags);
-            $tags = array_filter($tags);
+        if (empty($deepseekResponse)) {
+            return;
+        }
 
-            // 使用 Typecho 的标签 API 添加标签
-            $cid = $widget->cid; // 使用 $widget->cid 获取文章 ID
-            if (empty($cid)) {
+        $tags = explode(',', $deepseekResponse);
+        $tags = array_map('trim', $tags);
+        $tags = array_filter($tags);
 
-                return;
-            }
-            foreach ($tags as $tag) {
-                self::addTag($cid, $tag);
-            }
-        } else {
+        if (empty($tags)) {
+            return;
+        }
+
+        if ($tagCount > 0) {
+            self::clearTags($cid);
+        }
+
+        foreach ($tags as $tag) {
+            self::addTag($cid, $tag);
         }
     }
 
@@ -128,9 +146,9 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
                     'content' => $prompt,
                 ),
             ),
+            'stream' => false,
+            'thinking' => array('type' => 'disabled'),
         );
-
-
 
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
@@ -138,18 +156,45 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
         $response = curl_exec($ch);
-        $error = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+
+        if ($response === false || $httpCode !== 200) {
+            return '';
+        }
+
         $result = json_decode($response, true);
         if (isset($result['choices'][0]['message']['content'])) {
-
             return $result['choices'][0]['message']['content'];
         }
 
-
         return '';
+    }
+
+    /**
+     * 清空文章的所有标签
+     * @access private
+     * @param int $cid 文章 ID
+     * @return void
+     */
+    private static function clearTags($cid)
+    {
+        if (empty($cid)) {
+            return;
+        }
+
+        $tags = Typecho_Db::get()->fetchAll(Typecho_Db::get()->select('mid')->from('table.relationships')->where('cid = ?', $cid));
+
+        Typecho_Db::get()->query(Typecho_Db::get()->delete('table.relationships')->where('cid = ?', $cid));
+
+        foreach ($tags as $tag) {
+            $mid = $tag['mid'];
+            Typecho_Db::get()->query("UPDATE " . Typecho_Db::get()->getPrefix() . "metas SET count = count - 1 WHERE mid = " . $mid . " AND count > 0");
+        }
     }
 
     /**
@@ -162,7 +207,6 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
     private static function addTag($cid, $tag)
     {
         if (empty($cid)) {
-
             return;
         }
 
@@ -178,16 +222,13 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
             if ($insertId) {
                 $mid = $insertId;
             } else {
-
                 return;
             }
         } else {
             $mid = $mid->mid;
-            // 更新count时使用原生SQL表达式确保不会变成负数
             Typecho_Db::get()->query("UPDATE " . Typecho_Db::get()->getPrefix() . "metas SET count = count + 1 WHERE mid = " . $mid . " AND count >= 0");
         }
 
-        // 先删除旧的关系，再添加新的关系
         Typecho_Db::get()->query(Typecho_Db::get()->delete('table.relationships')
             ->where('cid = ?', $cid)
             ->where('mid = ?', $mid));
