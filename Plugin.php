@@ -19,7 +19,6 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
     public static function activate()
     {
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = array('AutoTags_Plugin', 'generateTags');
-        Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishModify = array('AutoTags_Plugin', 'generateTags');
         
         return _t('插件已激活');
     }
@@ -85,7 +84,7 @@ class AutoTags_Plugin implements Typecho_Plugin_Interface
         $contentLength = $options->plugin('AutoTags')->contentLength;
         $text = mb_substr(strip_tags($contents['text']), 0, $contentLength ?: 333, 'utf-8');
 
-        $prompt = "请根据以下文章标题和正文内容，提取关键词作为文章标签，保留原文内容，标签含义不能重复，随机获取1至10个标签，用逗号分隔：\n\n标题：{$title}\n\n正文：{$text}";
+        $prompt = "请根据以下文章标题和正文内容，提取关键词作为文章标签。要求：1.标签必须是2-4个字的有效词语；2.标签含义不能重复；3.标签必须是能概括文章标题及正文的关键词；4.随机获取1至10个标签，用逗号分隔。不要输出任何解释，只输出标签。\\n\\n标题：{$title}\\n\\n正文：{$text}";
 
 
         $deepseekResponse = self::callDeepSeekApi($deepseekApiKey, $prompt);
